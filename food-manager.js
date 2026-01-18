@@ -101,9 +101,11 @@ export class FoodManager {
     
     applySurfaceToFood(mesh, surfaceInfoFn) {
         const info = surfaceInfoFn(mesh.position);
-        mesh.position.setLength(this.EARTH_RADIUS + info.height);
-        // Optionally align to normal
-        // mesh.lookAt(...)
+        // Food radius 0.5, bonus 0.25. Let's just offset by radius approx so it sits on top.
+        // If mesh is main food (R=0.5), offset 0.5. If bonus (R=0.25), offset 0.25.
+        // We can check geometry radius or just approximate.
+        const radius = mesh.geometry.parameters.radius || 0.3;
+        mesh.position.setLength(this.EARTH_RADIUS + info.height + radius * 0.8); 
     }
     
     checkCollisions(snakeHeadPos) {

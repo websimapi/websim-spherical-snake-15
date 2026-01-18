@@ -199,7 +199,8 @@ export class Snake {
         // The normal is info.normal.
         
         // Snap head to correct height
-        this.head.position.setLength(this.EARTH_RADIUS + info.height);
+        // Add 0.2 offset so the box (height 0.4) sits ON TOP of the terrain, not inside it
+        this.head.position.setLength(this.EARTH_RADIUS + info.height + 0.2);
 
         // 1. Parallel Transport Movement Logic
         const headPos = this.head.position.clone();
@@ -251,7 +252,7 @@ export class Snake {
         
         if (surfaceInfoFn) {
             const newInfo = surfaceInfoFn(this.head.position);
-            this.head.position.setLength(this.EARTH_RADIUS + newInfo.height);
+            this.head.position.setLength(this.EARTH_RADIUS + newInfo.height + 0.2);
             
             // Re-orient to new normal to be safe for next frame?
             // Will be handled at start of next frame.
@@ -277,15 +278,12 @@ export class Snake {
 
         // 5. Update Segments Height
         // Segments follow path history which has position.
-        // BUT path history was recorded at a specific height.
-        // If the island rises under a segment, the segment should rise?
-        // Our path history stores 3D positions. If the island wasn't there when recorded,
-        // the point is low.
-        // We should re-sample height for segments.
+        // But we re-sample height to conform to current terrain (e.g. rising island)
         if (surfaceInfoFn) {
             for(const seg of this.segments) {
                 const segInfo = surfaceInfoFn(seg.position);
-                seg.position.setLength(this.EARTH_RADIUS + segInfo.height);
+                // Segments are height 0.3, so offset 0.15 to sit on top
+                seg.position.setLength(this.EARTH_RADIUS + segInfo.height + 0.15);
                 
                 // Also tilt segment to match normal?
                 // Visual polish: blend stored quat with new normal

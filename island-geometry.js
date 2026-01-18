@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { noise3D } from './math-utils.js';
 
-export const ISLAND_ANGULAR_RADIUS = Math.PI / 4; // Increased to 45 degrees to prevent edge clipping
+export const ISLAND_ANGULAR_RADIUS = Math.PI / 4; // 45 degrees
 
 // Helper to get height offset at a point on the "North Pole" cap
 // Point p is expected to be roughly on the sphere of radius R, near +Y axis
@@ -10,53 +10,49 @@ export function calculateIslandHeight(x, y, z, R) {
     const dist = Math.sqrt(x*x + z*z);
     const angle = Math.atan2(z, x);
     
-    // Use a logical radius for noise shaping that is smaller than the actual mesh radius
-    // This ensures the mask fades to zero well before the geometry ends
-    const logicalRadius = R * Math.sin(Math.PI / 6); // Keep the visual size roughly same (30 deg)
+    // Shrink the logical island size relative to the mesh cap to prevent edge clipping
+    // The mesh cap is ~0.7 * R radius. We keep the island content within ~0.4 * R.
+    const logicalRadius = R * 0.4; 
     
     // 2. Dynamic Irregular Shape
-    // Distort the distance field to create bays and peninsulas
-    // Lower frequency for more robust shapes
-    const shapeFreq = 1.5; 
-    const shapeAmp = logicalRadius * 0.3;
+    // Lower frequency for smoother, more robust bays
+    const shapeFreq = 1.0; 
+    const shapeAmp = logicalRadius * 0.25;
+    // Use circular noise input to ensure seamless shape around the pole
     const shapeNoise = noise3D(Math.cos(angle)*shapeFreq, Math.sin(angle)*shapeFreq, 42.0);
     const distortedDist = dist + shapeNoise * shapeAmp;
     
     // 3. Falloff / Mask
-    const edgeStart = logicalRadius * 0.8; 
-    const edgeEnd = logicalRadius * 1.1; // Fade out around the logical boundary
-    
-    // Ensure we don't exceed the actual geometry radius (which is larger now)
-    // ISLAND_ANGULAR_RADIUS is PI/4, so geometry radius is R * sin(PI/4) ~= 0.707 * R
-    // logicalRadius is R * 0.5. edgeEnd is R * 0.55. Plenty of room.
+    // Tighter mask to ensure it hits zero well before mesh boundary
+    const edgeStart = logicalRadius * 0.7; 
+    const edgeEnd = logicalRadius * 1.0; 
     
     const t = THREE.MathUtils.smoothstep(distortedDist, edgeStart, edgeEnd);
     const mask = 1.0 - t;
     
     if (mask <= 0.001) return 0;
 
-    // 4. Terrain Height (Smoother, less chaotic)
-    // Lower frequencies
-    const freq = 0.2;
+    // 4. Terrain Height (Much smoother)
+    // Very low frequency for rolling hills
+    const freq = 0.12;
     const n1 = noise3D(x * freq, z * freq, 10.0);
-    const n2 = noise3D(x * freq * 2.0, z * freq * 2.0, 20.0) * 0.4;
-    // Removed high freq n3 for smoother look
+    const n2 = noise3D(x * freq * 2.0, z * freq * 2.0, 20.0) * 0.25;
     
     let h = (n1 + n2); 
-    h = (h * 0.6 + 0.5); // Normalize roughly
+    h = (h * 0.5 + 0.5); // Normalize roughly 0..1
     
-    // Flatten beaches
-    h = Math.pow(Math.max(0, h), 1.5); // Stronger flattening
+    // Flatten beaches aggressively
+    // A higher power pushes low values (beaches) closer to 0
+    h = Math.pow(Math.max(0, h), 2.5);
     
-    // Scale amplitude (Reduced significantly)
-    h *= 0.8; 
+    // Scale amplitude down for a flatter profile
+    h *= 0.35; 
 
     // 5. Gentle Central Mass
-    // Smoother dome
-    const centerDistNorm = Math.min(1.0, distortedDist / (logicalRadius * 1.0));
-    // Cosine ease out
+    // Broad, low dome to ensure center is land
+    const centerDistNorm = Math.min(1.0, distortedDist / (logicalRadius * 1.2));
     const centerMass = Math.cos(centerDistNorm * Math.PI * 0.5); 
-    h += centerMass * 1.0; // Reduced from 1.8
+    h += centerMass * 0.6; 
     
     return h * mask;
 }
@@ -104,17 +100,17 @@ export function createIslandMesh(radius) {
         
         // Color Logic
         // Sea level is effectively h=0.5 (due to -0.5 sink)
-        // Beach: 0.5 to 0.7
-        // Grass: 0.7 to 1.5
-        // Forest: 1.5 to 2.8
-        // Rock: 2.8+
+        // Adjust thresholds for flatter terrain
         
         let c = cBeach.clone();
-        // Use smoothsteps for nicer gradients
-        if (h > 0.6) c.lerp(cGrass, THREE.MathUtils.smoothstep(h, 0.6, 1.0));
-        if (h > 1.5) c.lerp(cForest, THREE.MathUtils.smoothstep(h, 1.5, 2.2));
-        if (h > 2.8) c.lerp(cRock, THREE.MathUtils.smoothstep(h, 2.8, 3.5));
-        if (h > 4.0) c.lerp(cSnow, THREE.MathUtils.smoothstep(h, 4.0, 4.5));
+        // Beach -> Grass
+        if (h > 0.55) c.lerp(cGrass, THREE.MathUtils.smoothstep(h, 0.55, 0.8));
+        // Grass -> Forest
+        if (h > 0.9) c.lerp(cForest, THREE.MathUtils.smoothstep(h, 0.9, 1.3));
+        // Forest -> Rock
+        if (h > 1.4) c.lerp(cRock, THREE.MathUtils.smoothstep(h, 1.4, 1.8));
+        // Rock -> Snow
+        if (h > 2.0) c.lerp(cSnow, THREE.MathUtils.smoothstep(h, 2.0, 2.5));
         
         colors.push(c.r, c.g, c.b);
     }
