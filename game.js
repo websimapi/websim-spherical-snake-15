@@ -111,6 +111,7 @@ export class Game {
         this.snake = new Snake(this.scene, this.EARTH_RADIUS);
         
         this.island = new IslandGenerator(this.scene);
+        this.island.setRippleUniforms(this.rippleUniforms);
 
         // removed Food creation/spawning - moved to FoodManager
         this.foodManager = new FoodManager(this.scene, this.EARTH_RADIUS);

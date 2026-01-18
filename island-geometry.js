@@ -1,83 +1,127 @@
 import * as THREE from 'three';
 import { noise3D } from './math-utils.js';
 
-export const ISLAND_ANGULAR_RADIUS = Math.PI / 4; // 45 degrees
+export const ISLAND_ANGULAR_RADIUS = Math.PI / 3; // 60 degrees - Larger area for more robust island
+
+// Simple FBM for better terrain detail
+function fbm(x, y, z, octaves = 3, lacunarity = 2.0, gain = 0.5) {
+    let total = 0;
+    let amplitude = 1;
+    let frequency = 1;
+    for(let i=0; i<octaves; i++) {
+        total += noise3D(x * frequency, y * frequency, z * frequency) * amplitude;
+        amplitude *= gain;
+        frequency *= lacunarity;
+    }
+    return total;
+}
 
 // Helper to get height offset at a point on the "North Pole" cap
 // Point p is expected to be roughly on the sphere of radius R, near +Y axis
 export function calculateIslandHeight(x, y, z, R) {
-    // 1. Calculate polar coordinates in local cap plane (x,z) for noise mapping
+    // 1. Calculate polar coordinates in local cap plane (x,z)
     const dist = Math.sqrt(x*x + z*z);
     const angle = Math.atan2(z, x);
     
-    // Shrink the logical island size relative to the mesh cap to prevent edge clipping
-    // The mesh cap is ~0.7 * R radius. We keep the island content within ~0.4 * R.
-    const logicalRadius = R * 0.4; 
+    // Logical radius of the island mass (where it touches water)
+    const landRadius = R * 0.55; 
     
-    // 2. Dynamic Irregular Shape
-    // Lower frequency for smoother, more robust bays
-    const shapeFreq = 1.0; 
-    const shapeAmp = logicalRadius * 0.25;
-    // Use circular noise input to ensure seamless shape around the pole
-    const shapeNoise = noise3D(Math.cos(angle)*shapeFreq, Math.sin(angle)*shapeFreq, 42.0);
-    const distortedDist = dist + shapeNoise * shapeAmp;
+    // 2. Domain Warping for Irregular Coastline
+    const warpFreq = 0.8;
+    const warpAmp = R * 0.15;
+    const dx = noise3D(x * warpFreq, y * warpFreq, z * warpFreq + 10.0);
+    const dz = noise3D(x * warpFreq, y * warpFreq, z * warpFreq + 20.0);
     
-    // 3. Falloff / Mask
-    // Tighter mask to ensure it hits zero well before mesh boundary
-    const edgeStart = logicalRadius * 0.7; 
-    const edgeEnd = logicalRadius * 1.0; 
+    const wx = x + dx * warpAmp;
+    const wz = z + dz * warpAmp;
     
-    const t = THREE.MathUtils.smoothstep(distortedDist, edgeStart, edgeEnd);
-    const mask = 1.0 - t;
+    const wDist = Math.sqrt(wx*wx + wz*wz);
     
-    if (mask <= 0.001) return 0;
+    // 3. Radial Gradient (The main shape)
+    // 1.0 at center, 0.0 at landRadius
+    let radial = 1.0 - (wDist / landRadius);
+    
+    // 4. Height Profile Curve (Key to "Flatness")
+    // We want a steep rise from water (beach), then a flat plateau (grass)
+    // Input: radial (-inf to 1.0)
+    
+    // Cut off anything way outside
+    if (radial < -0.2) return -2.0; // Deep water, sunk well below
+    
+    // Map radial to height
+    // -0.1 to 0.1: Beach Transition
+    // 0.1 to 0.8: Plateau
+    // > 0.8: Peak
+    
+    let baseH = 0;
+    
+    if (radial < 0.0) {
+        // Shelf dropoff
+        baseH = radial * 2.0; // Linear drop
+    } else if (radial < 0.15) {
+        // Beach slope (gentle)
+        baseH = radial * 0.5; // reaches 0.075 at radial 0.15
+    } else {
+        // Land Plateau
+        // Smooth transition from beach to flat land
+        const t = (radial - 0.15) / 0.85;
+        // Ease out cubic to flatten the top
+        // Start at 0.075, go to ~0.5
+        const landForm = Math.pow(t, 0.5); // Fast rise, slow finish
+        baseH = 0.075 + landForm * 0.35; 
+    }
+    
+    // 5. Add Terrain Detail (FBM)
+    // Only add detail on land
+    let detail = 0;
+    if (radial > -0.05) {
+        const detailScale = 0.15; // Frequency
+        const detailAmp = 0.08;   // Amplitude (small to keep it flat)
+        
+        let n = fbm(wx * detailScale, y * detailScale, wz * detailScale, 3);
+        
+        // Dampen noise on beach to keep it smooth
+        const beachMask = THREE.MathUtils.smoothstep(radial, 0.0, 0.2);
+        detail = n * detailAmp * beachMask;
+    }
+    
+    // 6. Combine
+    let h = (baseH + detail) * R * 0.3; // Scale by radius context
+    
+    // 7. Edge Fade (Final Safety)
+    // Ensure the mesh edge is definitely pulled down
+    // The mesh extends to R * sin(60deg) approx R * 0.86
+    // We want to force down starting around R * 0.7
+    const meshEdgeDist = R * 0.7;
+    if (dist > meshEdgeDist) {
+        const fade = 1.0 - THREE.MathUtils.smoothstep(dist, meshEdgeDist, R * 0.9);
+        h *= fade;
+        h -= (1.0 - fade) * 2.0; // Force sink
+    }
 
-    // 4. Terrain Height (Much smoother)
-    // Very low frequency for rolling hills
-    const freq = 0.12;
-    const n1 = noise3D(x * freq, z * freq, 10.0);
-    const n2 = noise3D(x * freq * 2.0, z * freq * 2.0, 20.0) * 0.25;
-    
-    let h = (n1 + n2); 
-    h = (h * 0.5 + 0.5); // Normalize roughly 0..1
-    
-    // Flatten beaches aggressively
-    // A higher power pushes low values (beaches) closer to 0
-    h = Math.pow(Math.max(0, h), 2.5);
-    
-    // Scale amplitude down for a flatter profile
-    h *= 0.35; 
-
-    // 5. Gentle Central Mass
-    // Broad, low dome to ensure center is land
-    const centerDistNorm = Math.min(1.0, distortedDist / (logicalRadius * 1.2));
-    const centerMass = Math.cos(centerDistNorm * Math.PI * 0.5); 
-    h += centerMass * 0.6; 
-    
-    return h * mask;
+    return h;
 }
 
 export function createIslandMesh(radius) {
-    // Create a spherical cap at the North Pole (+Y)
-    // thetaLength determines the size of the cap
-    // High segment count for smooth terrain
+    // High resolution mesh for detailed coastline
     const geometry = new THREE.SphereGeometry(
         radius, 
-        128, 
-        64, 
-        0, Math.PI * 2, // Phi (around equator)
-        0, ISLAND_ANGULAR_RADIUS // Theta (down from pole)
+        192, // Higher segment count for smoother beach curves
+        96, 
+        0, Math.PI * 2, 
+        0, ISLAND_ANGULAR_RADIUS 
     );
     
-    // Vertex displacement
     const posAttribute = geometry.attributes.position;
     const count = posAttribute.count;
     const colors = [];
-    const cBeach = new THREE.Color(0xeebb88);
-    const cGrass = new THREE.Color(0x44aa44);
-    const cForest = new THREE.Color(0x228822);
-    const cRock = new THREE.Color(0x666666);
-    const cSnow = new THREE.Color(0xffffff);
+    
+    // Colors
+    const cDeepSand = new THREE.Color(0xcc9966); // Wet/Underwater sand
+    const cBeach = new THREE.Color(0xffcc88);    // Dry Sand
+    const cGrass = new THREE.Color(0x55aa55);
+    const cForest = new THREE.Color(0x227722);
+    const cRock = new THREE.Color(0x777777);
 
     const v = new THREE.Vector3();
 
@@ -86,46 +130,61 @@ export function createIslandMesh(radius) {
         const y = posAttribute.getY(i);
         const z = posAttribute.getZ(i);
         
-        v.set(x, y, z);
+        // Height Logic
+        // Our water level is logically at radius offset 0.
+        // But physically we want visual water to cut the island.
+        // We will sink the whole island calculation by a tiny bit or assume 0 is water line.
+        // However, standard sphere is at R. 
+        // calculateIslandHeight returns offset from R.
+        // 0 offset = at water surface.
         
-        // Calculate Height using the shared logic
-        const h = calculateIslandHeight(x, y, z, radius);
+        const hOffset = calculateIslandHeight(x, y, z, radius);
         
-        // Apply height along radial direction
-        // Sink deeper (-0.5) to better hide the mesh edges under the translucent water
-        // This effectively creates a submerged shelf around the island
-        v.normalize().multiplyScalar(radius + h - 0.5);
+        v.set(x, y, z).normalize().multiplyScalar(radius + hOffset);
         
         posAttribute.setXYZ(i, v.x, v.y, v.z);
         
-        // Color Logic
-        // Sea level is effectively h=0.5 (due to -0.5 sink)
-        // Adjust thresholds for flatter terrain
+        // Color Logic based on Height (hOffset)
+        // hOffset approx ranges from -2.0 to +2.0
+        // Water is at 0.0
         
-        let c = cBeach.clone();
-        // Beach -> Grass
-        if (h > 0.55) c.lerp(cGrass, THREE.MathUtils.smoothstep(h, 0.55, 0.8));
-        // Grass -> Forest
-        if (h > 0.9) c.lerp(cForest, THREE.MathUtils.smoothstep(h, 0.9, 1.3));
-        // Forest -> Rock
-        if (h > 1.4) c.lerp(cRock, THREE.MathUtils.smoothstep(h, 1.4, 1.8));
-        // Rock -> Snow
-        if (h > 2.0) c.lerp(cSnow, THREE.MathUtils.smoothstep(h, 2.0, 2.5));
+        let c = new THREE.Color();
+        
+        if (hOffset < 0.05) {
+            // Underwater / Wet Beach
+            c.copy(cDeepSand);
+            // Blend to dry beach
+            c.lerp(cBeach, THREE.MathUtils.smoothstep(hOffset, -0.1, 0.05));
+        } else if (hOffset < 0.25) {
+            // Beach -> Grass
+            c.copy(cBeach);
+            c.lerp(cGrass, THREE.MathUtils.smoothstep(hOffset, 0.15, 0.25));
+        } else if (hOffset < 0.8) {
+            // Grass -> Forest
+            c.copy(cGrass);
+            // subtle variation
+            const noiseVar = noise3D(x*0.2, y*0.2, z*0.2);
+            c.offsetHSL(0, 0, noiseVar * 0.05);
+            c.lerp(cForest, THREE.MathUtils.smoothstep(hOffset, 0.6, 0.8));
+        } else {
+            // Forest -> Rock
+            c.copy(cForest);
+            c.lerp(cRock, THREE.MathUtils.smoothstep(hOffset, 0.8, 1.2));
+        }
         
         colors.push(c.r, c.g, c.b);
     }
     
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    
-    // Recompute normals for correct lighting on the terrain
     geometry.computeVertexNormals();
     
+    // Standard Material with vertex colors
+    // We will inject shader logic for tides in the generator
     const material = new THREE.MeshStandardMaterial({
         vertexColors: true,
-        roughness: 0.8,
-        metalness: 0.1,
-        flatShading: false,
-        side: THREE.DoubleSide // Ensure we see it from all angles if it clips
+        roughness: 0.9,
+        metalness: 0.0,
+        flatShading: false
     });
     
     const mesh = new THREE.Mesh(geometry, material);

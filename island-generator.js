@@ -14,12 +14,25 @@ export class IslandGenerator {
         this._localDir = new THREE.Vector3();
         this._dummyQ = new THREE.Quaternion();
 
-        this.sandUniforms = {
+        // Combined Uniforms (Sand Physics + Tides)
+        this.uniforms = {
             uSnakePoints: { value: new Array(20).fill().map(() => new THREE.Vector3()) },
             uSnakeCount: { value: 0 },
             uTime: { value: 0 },
-            uGlobalScale: { value: 1.0 }
+            uGlobalScale: { value: 1.0 },
+            // Tides / Ripples - References will be copied from Game
+            uRippleCenters: { value: new Array(5).fill().map(() => new THREE.Vector3()) },
+            uRippleStartTimes: { value: new Array(5).fill(-1000) },
+            uRippleIntensities: { value: new Array(5).fill(0) },
+            uEarthRadius: { value: 10.0 }
         };
+    }
+
+    setRippleUniforms(rippleUniforms) {
+        // Link our uniforms to the game's ripple uniforms for synchronization
+        this.uniforms.uRippleCenters = rippleUniforms.uRippleCenters;
+        this.uniforms.uRippleStartTimes = rippleUniforms.uRippleStartTimes;
+        this.uniforms.uRippleIntensities = rippleUniforms.uRippleIntensities;
     }
 
     trigger(earthRadius) {
