@@ -21,7 +21,6 @@ function fbm(x, y, z, octaves = 3, lacunarity = 2.0, gain = 0.5) {
 export function calculateIslandHeight(x, y, z, R) {
     // 1. Calculate polar coordinates in local cap plane (x,z)
     const dist = Math.sqrt(x*x + z*z);
-    const angle = Math.atan2(z, x);
     
     // Logical radius of the island mass (where it touches water)
     const landRadius = R * 0.55; 
@@ -41,63 +40,48 @@ export function calculateIslandHeight(x, y, z, R) {
     // 1.0 at center, 0.0 at landRadius
     let radial = 1.0 - (wDist / landRadius);
     
-    // 4. Height Profile Curve (Key to "Flatness")
-    // We want a steep rise from water (beach), then a flat plateau (grass)
-    // Input: radial (-inf to 1.0)
+    // 4. Height Profile Curve
     
-    // Cut off anything way outside
-    if (radial < -0.2) return -2.0; // Deep water, sunk well below
+    // Underwater falloff
+    if (radial < 0.0) {
+        // Continuous smooth dropoff 
+        return radial * 4.0 * (R * 0.1); 
+    }
     
-    // Map radial to height
-    // -0.1 to 0.1: Beach Transition
-    // 0.1 to 0.8: Plateau
-    // > 0.8: Peak
+    // Land Parameters - Flatter, Wider Beach
+    const plateauHeightVal = 0.035; 
+    const beachWidth = 0.55; 
     
     let baseH = 0;
     
-    if (radial < 0.0) {
-        // Shelf dropoff
-        baseH = radial * 2.0; // Linear drop
-    } else if (radial < 0.15) {
-        // Beach slope (gentle)
-        baseH = radial * 0.5; // reaches 0.075 at radial 0.15
+    if (radial < beachWidth) {
+        // Beach Ramp: Linear mix for robust convex-ish slope
+        const t = radial / beachWidth;
+        // Linear mix with smoothstep for a solid beach that eases into plateau
+        baseH = (t * 0.6 + THREE.MathUtils.smoothstep(t, 0.0, 1.0) * 0.4) * plateauHeightVal;
     } else {
-        // Land Plateau
-        // Smooth transition from beach to flat land
-        const t = (radial - 0.15) / 0.85;
-        // Ease out cubic to flatten the top
-        // Start at 0.075, go to ~0.5
-        const landForm = Math.pow(t, 0.5); // Fast rise, slow finish
-        baseH = 0.075 + landForm * 0.35; 
+        // Plateau
+        baseH = plateauHeightVal;
+        // Extremely subtle crown
+        baseH += (radial - beachWidth) * 0.005;
     }
     
     // 5. Add Terrain Detail (FBM)
-    // Only add detail on land
+    // Significantly reduced amplitude for "flatter" look
     let detail = 0;
-    if (radial > -0.05) {
-        const detailScale = 0.15; // Frequency
-        const detailAmp = 0.08;   // Amplitude (small to keep it flat)
-        
-        let n = fbm(wx * detailScale, y * detailScale, wz * detailScale, 3);
-        
-        // Dampen noise on beach to keep it smooth
-        const beachMask = THREE.MathUtils.smoothstep(radial, 0.0, 0.2);
-        detail = n * detailAmp * beachMask;
-    }
     
-    // 6. Combine
-    let h = (baseH + detail) * R * 0.3; // Scale by radius context
+    // Only apply detail on land
+    const detailScale = 0.4;
+    const detailAmp = 0.002; // Practically flat
     
-    // 7. Edge Fade (Final Safety)
-    // Ensure the mesh edge is definitely pulled down
-    // The mesh extends to R * sin(60deg) approx R * 0.86
-    // We want to force down starting around R * 0.7
-    const meshEdgeDist = R * 0.7;
-    if (dist > meshEdgeDist) {
-        const fade = 1.0 - THREE.MathUtils.smoothstep(dist, meshEdgeDist, R * 0.9);
-        h *= fade;
-        h -= (1.0 - fade) * 2.0; // Force sink
-    }
+    let n = fbm(wx * detailScale, y * detailScale, wz * detailScale, 3);
+    
+    // Dampen noise heavily on beach to keep it smooth sand
+    const beachMask = THREE.MathUtils.smoothstep(radial, beachWidth * 0.8, beachWidth * 1.5);
+    detail = n * detailAmp * beachMask;
+    
+    // 6. Combine and Scale
+    let h = (baseH + detail) * R;
 
     return h;
 }
@@ -145,31 +129,29 @@ export function createIslandMesh(radius) {
         posAttribute.setXYZ(i, v.x, v.y, v.z);
         
         // Color Logic based on Height (hOffset)
-        // hOffset approx ranges from -2.0 to +2.0
-        // Water is at 0.0
+        // Adjusted for flatter profile (Max ~0.35)
         
         let c = new THREE.Color();
         
-        if (hOffset < 0.05) {
-            // Underwater / Wet Beach
+        if (hOffset < 0.01) {
+            // Wet Beach edge
             c.copy(cDeepSand);
-            // Blend to dry beach
-            c.lerp(cBeach, THREE.MathUtils.smoothstep(hOffset, -0.1, 0.05));
-        } else if (hOffset < 0.25) {
-            // Beach -> Grass
+            c.lerp(cBeach, THREE.MathUtils.smoothstep(hOffset, -0.05, 0.01));
+        } else if (hOffset < 0.2) {
+            // Broad Dry Beach
             c.copy(cBeach);
-            c.lerp(cGrass, THREE.MathUtils.smoothstep(hOffset, 0.15, 0.25));
-        } else if (hOffset < 0.8) {
-            // Grass -> Forest
-            c.copy(cGrass);
-            // subtle variation
-            const noiseVar = noise3D(x*0.2, y*0.2, z*0.2);
-            c.offsetHSL(0, 0, noiseVar * 0.05);
-            c.lerp(cForest, THREE.MathUtils.smoothstep(hOffset, 0.6, 0.8));
+            // Transition to grass near top of beach slope
+            c.lerp(cGrass, THREE.MathUtils.smoothstep(hOffset, 0.15, 0.22));
         } else {
-            // Forest -> Rock
-            c.copy(cForest);
-            c.lerp(cRock, THREE.MathUtils.smoothstep(hOffset, 0.8, 1.2));
+            // Grass Plateau
+            c.copy(cGrass);
+            const noiseVar = noise3D(x*0.2, y*0.2, z*0.2);
+            c.offsetHSL(0, 0, noiseVar * 0.03);
+            
+            // Occasional patches of "forest"
+            if (noiseVar > 0.6) {
+                 c.lerp(cForest, 0.5);
+            }
         }
         
         colors.push(c.r, c.g, c.b);
@@ -177,6 +159,28 @@ export function createIslandMesh(radius) {
     
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeVertexNormals();
+
+    // Fix Seam Normals (average start and end columns)
+    const norms = geometry.attributes.normal;
+    const widthSegs = 192; 
+    const heightSegs = 96;
+
+    for (let y = 0; y <= heightSegs; y++) {
+        const idxA = y * (widthSegs + 1);
+        const idxB = idxA + widthSegs;
+        
+        const mx = (norms.getX(idxA) + norms.getX(idxB)) * 0.5;
+        const my = (norms.getY(idxA) + norms.getY(idxB)) * 0.5;
+        const mz = (norms.getZ(idxA) + norms.getZ(idxB)) * 0.5;
+        
+        const len = Math.sqrt(mx*mx + my*my + mz*mz);
+        if (len > 0) {
+            const nx = mx/len, ny = my/len, nz = mz/len;
+            norms.setXYZ(idxA, nx, ny, nz);
+            norms.setXYZ(idxB, nx, ny, nz);
+        }
+    }
+    norms.needsUpdate = true;
     
     // Standard Material with vertex colors
     // We will inject shader logic for tides in the generator

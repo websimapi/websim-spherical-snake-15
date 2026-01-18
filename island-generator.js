@@ -33,6 +33,7 @@ export class IslandGenerator {
         this.sandUniforms.uRippleCenters = rippleUniforms.uRippleCenters;
         this.sandUniforms.uRippleStartTimes = rippleUniforms.uRippleStartTimes;
         this.sandUniforms.uRippleIntensities = rippleUniforms.uRippleIntensities;
+        this.sandUniforms.uTime = rippleUniforms.uTime;
     }
 
     trigger(earthRadius) {
@@ -75,6 +76,11 @@ export class IslandGenerator {
             shader.uniforms.uSnakePoints = this.sandUniforms.uSnakePoints;
             shader.uniforms.uSnakeCount = this.sandUniforms.uSnakeCount;
             shader.uniforms.uGlobalScale = this.sandUniforms.uGlobalScale;
+            
+            shader.uniforms.uTime = this.sandUniforms.uTime;
+            shader.uniforms.uRippleCenters = this.sandUniforms.uRippleCenters;
+            shader.uniforms.uRippleStartTimes = this.sandUniforms.uRippleStartTimes;
+            shader.uniforms.uRippleIntensities = this.sandUniforms.uRippleIntensities;
 
             shader.vertexShader = `
                 uniform vec3 uSnakePoints[20];
@@ -84,20 +90,14 @@ export class IslandGenerator {
                 varying float vIsBeach;
             ` + shader.vertexShader;
 
-            // Pass world pos and determine if beach based on color (simple approximation)
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <begin_vertex>',
                 `
                 #include <begin_vertex>
                 
-                // Calculate world position early for logic
                 vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
                 vWorldPos = worldPosition.xyz;
 
-                // Check vertex color (passed as attribute usually)
-                // We use color to identify sand. Beach color is approx (0.93, 0.73, 0.53)
-                // Let's assume red component > 0.8 is sand (grass is 0.26)
-                // color is attribute vec3 color;
                 vIsBeach = 0.0;
                 #ifdef USE_COLOR
                     if (color.r > 0.6 && color.g > 0.5) {
@@ -105,39 +105,72 @@ export class IslandGenerator {
                     }
                 #endif
 
-                // Sand Displacement Logic
                 if (vIsBeach > 0.5 && uSnakeCount > 0) {
                     vec3 accumulatedOffset = vec3(0.0);
-                    
                     for(int i = 0; i < 20; i++) {
                         if (i >= uSnakeCount) break;
-                        
                         vec3 sPos = uSnakePoints[i];
                         float dist = distance(worldPosition.xyz, sPos);
-                        
-                        // Interaction radius (adjusted by scale)
                         float radius = 1.5 * uGlobalScale;
-                        
                         if (dist < radius) {
-                            float strength = 1.0 - (dist / radius);
-                            strength = pow(strength, 2.0); // smooth falloff
-                            
-                            // Push away from snake point horizontally
+                            float strength = pow(1.0 - (dist / radius), 2.0);
                             vec3 dir = normalize(worldPosition.xyz - sPos);
-                            
-                            // Flatten dir to be tangent-ish (simple repulsion)
-                            accumulatedOffset += dir * strength * 0.4 * uGlobalScale;
-                            
-                            // Also push down slightly to make a groove?
-                            // Or up to make a ridge?
-                            // Let's make a ridge (push up/out)
-                            accumulatedOffset += normal * strength * 0.2 * uGlobalScale;
+                            accumulatedOffset += dir * strength * 0.5 * uGlobalScale;
+                            accumulatedOffset += normal * strength * 0.35 * uGlobalScale;
                         }
                     }
-                    
                     transformed += accumulatedOffset;
                 }
                 `
+            );
+            
+            const rippleFrag = `
+                uniform float uTime;
+                uniform vec3 uRippleCenters[5];
+                uniform float uRippleStartTimes[5];
+                uniform float uRippleIntensities[5];
+                varying vec3 vWorldPos;
+                varying float vIsBeach;
+                
+                float getRippleAt(vec3 pos) {
+                    float total = 0.0;
+                    vec3 pNorm = normalize(pos);
+                    for(int i=0; i<5; i++) {
+                        float startTime = uRippleStartTimes[i];
+                        if (startTime < 0.0) continue;
+                        float age = uTime - startTime;
+                        if (age < 0.0 || age > 2.0) continue;
+                        vec3 center = uRippleCenters[i];
+                        float intensity = uRippleIntensities[i];
+                        float dotProd = dot(pNorm, normalize(center));
+                        float angle = acos(clamp(dotProd, -1.0, 1.0));
+                        float dist = angle * 10.0;
+                        float speed = 8.0; 
+                        float waveCenter = age * speed;
+                        float distDiff = dist - waveCenter;
+                        if (abs(distDiff) < 2.0) {
+                            float ripple = sin(distDiff * 3.0) * exp(-distDiff * distDiff);
+                            ripple *= (1.0 - age / 2.0);
+                            ripple *= intensity;
+                            total += ripple;
+                        }
+                    }
+                    return total;
+                }
+            `;
+
+            shader.fragmentShader = rippleFrag + shader.fragmentShader;
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <dithering_fragment>',
+                `#include <dithering_fragment>
+                if (vIsBeach > 0.5) {
+                    float rVal = getRippleAt(vWorldPos);
+                    if (abs(rVal) > 0.05) {
+                        float wet = smoothstep(0.05, 0.3, abs(rVal));
+                        vec3 wetColor = gl_FragColor.rgb * 0.6 + vec3(0.1, 0.2, 0.3) * 0.2;
+                        gl_FragColor.rgb = mix(gl_FragColor.rgb, wetColor, wet * 0.8);
+                    }
+                }`
             );
         };
 
