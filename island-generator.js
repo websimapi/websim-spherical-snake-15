@@ -99,10 +99,10 @@ export class IslandGenerator {
         const worldNormal = localNormal.applyQuaternion(this.mesh.quaternion);
 
         // 6. Calculate Final Height
-        // The mesh was sunk by 0.2 in base space to hide edges.
+        // The mesh was sunk by 0.5 in base space to hide edges.
         // We replicate that offset and then scale up.
-        // If result is negative, it means we are "underwater" (on the sunk skirt).
-        const hPhysical = Math.max(0, (hBase - 0.2) * scale);
+        // This ensures the physics surface matches the visual waterline.
+        const hPhysical = Math.max(0, (hBase - 0.5) * scale);
 
         return { height: hPhysical, normal: worldNormal };
     }
