@@ -223,10 +223,10 @@ export class IslandGenerator {
         const worldNormal = localNormal.applyQuaternion(this.mesh.quaternion);
 
         // 6. Calculate Final Height
-        // The mesh was sunk by 0.5 in base space to hide edges.
-        // We replicate that offset and then scale up.
-        // This ensures the physics surface matches the visual waterline.
-        const hPhysical = Math.max(0, (hBase - 0.5) * scale);
+        // Scale the base height directly.
+        // We clamp to 0 to ensure snake stays on water surface when over the underwater skirt,
+        // effectively treating the ocean as a solid floor at height 0.
+        const hPhysical = Math.max(0, hBase * scale);
 
         return { height: hPhysical, normal: worldNormal };
     }

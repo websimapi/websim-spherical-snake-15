@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { noise3D } from './math-utils.js';
 
-export const ISLAND_ANGULAR_RADIUS = Math.PI / 3; // 60 degrees - Larger area for more robust island
+export const ISLAND_ANGULAR_RADIUS = Math.PI / 2.5; // ~72 degrees for more expansive island
 
 // Simple FBM for better terrain detail
 function fbm(x, y, z, octaves = 3, lacunarity = 2.0, gain = 0.5) {
@@ -23,7 +23,7 @@ export function calculateIslandHeight(x, y, z, R) {
     const dist = Math.sqrt(x*x + z*z);
     
     // Logical radius of the island mass (where it touches water)
-    const landRadius = R * 0.55; 
+    const landRadius = R * 0.75; 
     
     // 2. Domain Warping for Irregular Coastline
     const warpFreq = 0.8;
@@ -49,36 +49,35 @@ export function calculateIslandHeight(x, y, z, R) {
     }
     
     // Land Parameters - Flatter, Wider Beach
-    const plateauHeightVal = 0.035; 
-    const beachWidth = 0.55; 
+    const plateauHeightVal = 0.045; 
+    const beachWidth = 0.7; // Expansive beach (70% of radius)
     
     let baseH = 0;
     
     if (radial < beachWidth) {
-        // Beach Ramp: Linear mix for robust convex-ish slope
+        // Beach Ramp
         const t = radial / beachWidth;
-        // Linear mix with smoothstep for a solid beach that eases into plateau
-        baseH = (t * 0.6 + THREE.MathUtils.smoothstep(t, 0.0, 1.0) * 0.4) * plateauHeightVal;
+        // Smoothstep for a nice S-curve slope that's easy to climb but robust
+        baseH = THREE.MathUtils.smoothstep(t, 0.0, 1.0) * plateauHeightVal;
     } else {
         // Plateau
         baseH = plateauHeightVal;
-        // Extremely subtle crown
-        baseH += (radial - beachWidth) * 0.005;
+        // Subtle variations
+        baseH += (radial - beachWidth) * 0.01;
     }
     
-    // 5. Add Terrain Detail (FBM)
-    // Significantly reduced amplitude for "flatter" look
+    // 5. Add Terrain Detail
     let detail = 0;
     
-    // Only apply detail on land
-    const detailScale = 0.4;
-    const detailAmp = 0.002; // Practically flat
-    
-    let n = fbm(wx * detailScale, y * detailScale, wz * detailScale, 3);
-    
-    // Dampen noise heavily on beach to keep it smooth sand
-    const beachMask = THREE.MathUtils.smoothstep(radial, beachWidth * 0.8, beachWidth * 1.5);
-    detail = n * detailAmp * beachMask;
+    // Low frequency rolling hills for plateau
+    const plateauNoise = fbm(wx * 0.3, y * 0.3, wz * 0.3, 2);
+    const plateauMask = THREE.MathUtils.smoothstep(radial, beachWidth * 0.9, beachWidth * 1.1);
+    detail += plateauNoise * 0.004 * plateauMask;
+
+    // Subtle dunes for beach (high frequency, very low amplitude)
+    const duneNoise = noise3D(wx * 2.0, y * 2.0, wz * 2.0);
+    const beachMask = 1.0 - plateauMask; // Inverse of plateau
+    detail += duneNoise * 0.0015 * beachMask;
     
     // 6. Combine and Scale
     let h = (baseH + detail) * R;
@@ -129,28 +128,34 @@ export function createIslandMesh(radius) {
         posAttribute.setXYZ(i, v.x, v.y, v.z);
         
         // Color Logic based on Height (hOffset)
-        // Adjusted for flatter profile (Max ~0.35)
+        // hOffset is absolute displacement. Radius is typically 10.
         
         let c = new THREE.Color();
         
-        if (hOffset < 0.01) {
+        const hNorm = hOffset / radius; // ~0.0 to 0.05
+        
+        if (hNorm < 0.002) {
             // Wet Beach edge
             c.copy(cDeepSand);
-            c.lerp(cBeach, THREE.MathUtils.smoothstep(hOffset, -0.05, 0.01));
-        } else if (hOffset < 0.2) {
+            c.lerp(cBeach, THREE.MathUtils.smoothstep(hNorm, -0.005, 0.002));
+        } else if (hNorm < 0.035) { // Adjusted for wider beach
             // Broad Dry Beach
             c.copy(cBeach);
             // Transition to grass near top of beach slope
-            c.lerp(cGrass, THREE.MathUtils.smoothstep(hOffset, 0.15, 0.22));
+            // Add subtle sand variation
+            const sandVar = noise3D(x*3, y*3, z*3);
+            c.offsetHSL(0, 0, sandVar * 0.02);
+            
+            c.lerp(cGrass, THREE.MathUtils.smoothstep(hNorm, 0.025, 0.04));
         } else {
             // Grass Plateau
             c.copy(cGrass);
-            const noiseVar = noise3D(x*0.2, y*0.2, z*0.2);
-            c.offsetHSL(0, 0, noiseVar * 0.03);
+            const noiseVar = noise3D(x*0.4, y*0.4, z*0.4);
+            c.offsetHSL(0, 0, noiseVar * 0.04);
             
             // Occasional patches of "forest"
-            if (noiseVar > 0.6) {
-                 c.lerp(cForest, 0.5);
+            if (noiseVar > 0.5) {
+                 c.lerp(cForest, 0.6);
             }
         }
         
