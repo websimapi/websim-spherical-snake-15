@@ -111,12 +111,30 @@ export class IslandGenerator {
                         if (i >= uSnakeCount) break;
                         vec3 sPos = uSnakePoints[i];
                         float dist = distance(worldPosition.xyz, sPos);
-                        float radius = 1.5 * uGlobalScale;
+                        float radius = 1.2 * uGlobalScale;
+                        
                         if (dist < radius) {
-                            float strength = pow(1.0 - (dist / radius), 2.0);
-                            vec3 dir = normalize(worldPosition.xyz - sPos);
-                            accumulatedOffset += dir * strength * 0.5 * uGlobalScale;
-                            accumulatedOffset += normal * strength * 0.35 * uGlobalScale;
+                            // Normalized distance 0..1
+                            float t = dist / radius;
+                            
+                            // Create a trench shape:
+                            // Deep in middle, rising to a rim, then falling to 0
+                            
+                            // 1. Trench (Dig down)
+                            float trench = -1.0 * smoothstep(1.0, 0.0, t); 
+                            
+                            // 2. Rims (Push up at edges)
+                            float rim = sin(t * 3.14159) * 0.5;
+                            
+                            // Combine vertical displacement
+                            float verticalDisp = (trench * 0.3 + rim * 0.15) * uGlobalScale;
+                            
+                            // 3. Horizontal displacement (Push sand aside)
+                            float pushOut = smoothstep(1.0, 0.0, t) * 0.4 * uGlobalScale;
+                            vec3 pushDir = normalize(worldPosition.xyz - sPos);
+                            
+                            accumulatedOffset += normal * verticalDisp;
+                            accumulatedOffset += pushDir * pushOut;
                         }
                     }
                     transformed += accumulatedOffset;

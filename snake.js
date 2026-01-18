@@ -17,6 +17,10 @@ export class Snake {
         this.segments = [];
         this.pathHistory = [];
         this.currentDir = new THREE.Vector3(1, 0, 0);
+        
+        // Physics Smoothing
+        this.currentNormal = new THREE.Vector3(0, 1, 0);
+        this.currentHeight = earthRadius;
 
         // Cute face state
         this.tongue = null;
@@ -198,16 +202,33 @@ export class Snake {
         // The surface is defined by radius = EARTH_RADIUS + info.height
         // The normal is info.normal.
         
-        // Snap head to correct height
-        // Add 0.2 offset so the box (height 0.4) sits ON TOP of the terrain, not inside it
-        this.head.position.setLength(this.EARTH_RADIUS + info.height + 0.2);
+        // --- Smooth Physics ---
+        // Instead of snapping instantly, we interpolate height and normal to reduce jitter
+        // This acts like a suspension system for the snake head
+        
+        // 1. Smooth Height
+        const targetH = this.EARTH_RADIUS + info.height + 0.2;
+        // If this is the first frame or reset, snap immediately
+        if (Math.abs(this.currentHeight - this.EARTH_RADIUS) > 5) this.currentHeight = targetH;
+        
+        // Lerp height (fast but smooth)
+        this.currentHeight = THREE.MathUtils.lerp(this.currentHeight, targetH, dt * 10.0);
+        this.head.position.setLength(this.currentHeight);
+
+        // 2. Smooth Normal
+        // Initialize if needed
+        if (this.currentNormal.lengthSq() < 0.5) this.currentNormal.copy(info.normal);
+        
+        this.currentNormal.lerp(info.normal, dt * 8.0).normalize();
+        
+        // Use the smoothed normal for orientation calculations
+        const surfaceNormal = this.currentNormal; 
 
         // 1. Parallel Transport Movement Logic
         const headPos = this.head.position.clone();
-        const surfaceNormal = info.normal; // Use the terrain normal!
         
         let currentForward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.head.quaternion);
-        // Project forward vector onto the terrain tangent plane
+        // Project forward vector onto the smoothed tangent plane
         currentForward.projectOnPlane(surfaceNormal).normalize();
 
         // Steering
