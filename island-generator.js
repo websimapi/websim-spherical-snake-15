@@ -160,7 +160,9 @@ export class IslandGenerator {
         if (dist > maxDist) return 0;
         
         // Edge falloff
-        const falloff = Math.smoothstep(maxDist, maxDist * 0.7, dist);
+        const t = THREE.MathUtils.smoothstep(dist, maxDist * 0.7, maxDist);
+        const falloff = 1.0 - t;
+        
         if (falloff <= 0) return 0;
 
         // Noise
