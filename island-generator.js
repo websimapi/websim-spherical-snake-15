@@ -196,6 +196,12 @@ export class IslandGenerator {
         // 1. Transform world direction into Island Local Space (where island is at North Pole)
         const invQ = this.mesh.quaternion.clone().invert();
         const localDir = direction.clone().applyQuaternion(invQ); // Should be near (0, 1, 0)
+
+        // Fix ghost island on opposite side:
+        // Projecting sphere surface to XZ plane (used in calculateIslandHeight) is ambiguous for poles (both 0,0).
+        // We restrict island influence to the top hemisphere (localDir.y > threshold).
+        // Island radius is ~72 deg => cos(72) ~ 0.3. We use 0.2 as a safe cutoff to ignore the antipode.
+        if (localDir.y < 0.2) return { height: 0, normal: direction.clone() };
         
         // 2. Calculate coordinates on the BASE sphere
         // localDir is normalized. We map it to the BASE radius to check noise consistency
