@@ -8,6 +8,7 @@ export class IslandGenerator {
         this.center = new THREE.Vector3(0, 1, 0); // Target center direction on Earth
         this.state = 'inactive'; // inactive, spawning, docked
         this.progress = 0; // 0 to 1
+        this.baseRadius = 10; // Fixed base radius for generation to ensure consistent noise features
         
         // Reusable vectors for physics to avoid garbage
         this._localDir = new THREE.Vector3();
@@ -30,7 +31,8 @@ export class IslandGenerator {
         ).normalize();
         
         // 2. Generate Proper Mesh
-        this.createMesh(earthRadius);
+        // Always generate at base radius; we handle growth via scaling
+        this.createMesh(this.baseRadius);
         
         // 3. Start Animation
         this.state = 'spawning';
@@ -38,7 +40,7 @@ export class IslandGenerator {
         this.mesh.visible = true;
     }
 
-    createMesh(earthRadius) {
+    createMesh(radius) {
         if (this.mesh) {
             this.scene.remove(this.mesh);
             if(this.mesh.geometry) this.mesh.geometry.dispose();
@@ -46,7 +48,7 @@ export class IslandGenerator {
         }
 
         // Generate the detailed terrain mesh
-        this.mesh = createIslandMesh(earthRadius);
+        this.mesh = createIslandMesh(radius);
         
         // Align mesh to the target center
         // The mesh is generated at North Pole (0, 1, 0)
@@ -62,75 +64,75 @@ export class IslandGenerator {
 
     // Get height at a specific direction (normalized) relative to sphere center
     getHeightAndNormal(direction, earthRadius) {
-        if (this.state !== 'docked' || !this.mesh) return { height: 0, normal: direction.clone() };
+        if ((this.state !== 'docked' && this.state !== 'spawning') || !this.mesh) return { height: 0, normal: direction.clone() };
+
+        // Scale Factor (Earth has grown, island grows with it)
+        const scale = earthRadius / this.baseRadius;
 
         // 1. Transform world direction into Island Local Space (where island is at North Pole)
         const invQ = this.mesh.quaternion.clone().invert();
         const localDir = direction.clone().applyQuaternion(invQ); // Should be near (0, 1, 0)
         
-        // 2. Calculate coordinates on the local frame
-        // localDir is normalized. Position on sphere surface is localDir * R.
-        // We need x, y, z for the height function which expects point on sphere.
-        const px = localDir.x * earthRadius;
-        const py = localDir.y * earthRadius;
-        const pz = localDir.z * earthRadius;
+        // 2. Calculate coordinates on the BASE sphere
+        // localDir is normalized. We map it to the BASE radius to check noise consistency
+        const px = localDir.x * this.baseRadius;
+        const py = localDir.y * this.baseRadius;
+        const pz = localDir.z * this.baseRadius;
         
-        // 3. Get Height
-        const h = calculateIslandHeight(px, py, pz, earthRadius);
+        // 3. Get Base Height
+        const hBase = calculateIslandHeight(px, py, pz, this.baseRadius);
         
-        if (h <= 0.001) return { height: 0, normal: direction.clone() };
+        if (hBase <= 0.001) return { height: 0, normal: direction.clone() };
         
-        // 4. Calculate Normal (Finite Difference approximation)
+        // 4. Calculate Normal (Finite Difference approximation in Base Space)
         const eps = 0.1;
-        // Sample nearby points in local space
-        // We move slightly along X and Z (tangent plane at pole)
-        const hx = calculateIslandHeight(px + eps, py, pz, earthRadius);
-        const hz = calculateIslandHeight(px, py, pz + eps, earthRadius);
+        const hx = calculateIslandHeight(px + eps, py, pz, this.baseRadius);
+        const hz = calculateIslandHeight(px, py, pz + eps, this.baseRadius);
         
         // Slopes
-        const dhdx = (hx - h) / eps;
-        const dhdz = (hz - h) / eps;
+        const dhdx = (hx - hBase) / eps;
+        const dhdz = (hz - hBase) / eps;
         
-        // Construct local normal
-        // Base normal at pole is (0,1,0).
-        // Terrain normal tilts away from slope.
-        // Vector = (-dhdx, 1, -dhdz).normalize()
-        // Note: This is an approximation treating the cap as a plane.
-        // For a sphere, it's slightly more complex, but for steering logic, this is sufficient.
         const localNormal = new THREE.Vector3(-dhdx, 1, -dhdz).normalize();
         
         // 5. Transform normal back to world space
         const worldNormal = localNormal.applyQuaternion(this.mesh.quaternion);
 
-        return { height: h, normal: worldNormal };
+        // 6. Calculate Final Height
+        // The mesh was sunk by 0.2 in base space to hide edges.
+        // We replicate that offset and then scale up.
+        // If result is negative, it means we are "underwater" (on the sunk skirt).
+        const hPhysical = Math.max(0, (hBase - 0.2) * scale);
+
+        return { height: hPhysical, normal: worldNormal };
     }
 
     update(dt, earthRadius) {
-        if (this.state === 'inactive' || this.state === 'docked') return;
+        if (this.state === 'inactive') return;
+        
+        // Always maintain scale ratio with Earth growth
+        const globalScale = earthRadius / this.baseRadius;
+
+        if (this.state === 'docked') {
+             if (this.mesh) {
+                 this.mesh.scale.setScalar(globalScale);
+             }
+             return;
+        }
         
         this.progress += dt * 0.3; // Rise over ~3 seconds
         
         if (this.progress >= 1.0) {
             this.progress = 1.0;
             this.state = 'docked';
-            this.mesh.scale.set(1, 1, 1);
+            this.mesh.scale.setScalar(globalScale);
         } else {
             // Animation: "Breach" effect
-            // Scale up from core
-            // Ease out elastic for a nice pop
             const p = this.progress;
-            // Simple overshoot
-            // const s = 1.0 + Math.sin(p * Math.PI) * 0.1; // mild wobble?
-            // Just smooth grow
-            const s = THREE.MathUtils.smoothstep(p, 0, 1);
+            const animScale = THREE.MathUtils.smoothstep(p, 0, 1);
             
-            // Start small deep inside (technically visual scale only affects size, not position if at 0,0,0)
-            // But since vertices are at radius R, scaling by 0.1 puts them at R*0.1 (deep inside).
-            // This creates the perfect "rising from core" effect.
-            this.mesh.scale.setScalar(s);
-            
-            // Add some rotation spin while rising?
-            // this.mesh.rotateY(dt); // Local Y rotation (spin around pole)
+            // Combined Scale: Earth Growth * Spawning Animation
+            this.mesh.scale.setScalar(globalScale * animScale);
         }
     }
 }

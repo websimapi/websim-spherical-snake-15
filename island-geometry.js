@@ -83,7 +83,8 @@ export function createIslandMesh(radius) {
         
         // Apply height along radial direction
         // Since we are at the pole of a sphere, normal is effectively 'v' normalized
-        v.normalize().multiplyScalar(radius + h);
+        // Sink the mesh slightly (-0.2) so the edges (h=0) are submerged to prevent z-fighting
+        v.normalize().multiplyScalar(radius + h - 0.2);
         
         posAttribute.setXYZ(i, v.x, v.y, v.z);
         
