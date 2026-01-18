@@ -321,7 +321,7 @@ export class Game {
         if (this.score >= 50 && this.island.state === 'inactive') {
             this.island.trigger(this.EARTH_RADIUS);
         }
-        this.island.update(dt, this.EARTH_RADIUS);
+        this.island.update(dt, this.EARTH_RADIUS, this.snake);
 
         // Prepare Surface Info Function
         // Returns { height, normal } at a given position

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { noise3D } from './math-utils.js';
 
-export const ISLAND_ANGULAR_RADIUS = Math.PI / 6; // 30 degrees
+export const ISLAND_ANGULAR_RADIUS = Math.PI / 4; // Increased to 45 degrees to prevent edge clipping
 
 // Helper to get height offset at a point on the "North Pole" cap
 // Point p is expected to be roughly on the sphere of radius R, near +Y axis
@@ -10,46 +10,53 @@ export function calculateIslandHeight(x, y, z, R) {
     const dist = Math.sqrt(x*x + z*z);
     const angle = Math.atan2(z, x);
     
-    // Max arc length (chord length approx on plane x,z)
-    const maxDist = R * Math.sin(ISLAND_ANGULAR_RADIUS);
+    // Use a logical radius for noise shaping that is smaller than the actual mesh radius
+    // This ensures the mask fades to zero well before the geometry ends
+    const logicalRadius = R * Math.sin(Math.PI / 6); // Keep the visual size roughly same (30 deg)
     
     // 2. Dynamic Irregular Shape
     // Distort the distance field to create bays and peninsulas
-    // Low frequency noise on the angle creates a closed loop of noise
-    const shapeFreq = 2.0; 
-    const shapeAmp = maxDist * 0.25;
+    // Lower frequency for more robust shapes
+    const shapeFreq = 1.5; 
+    const shapeAmp = logicalRadius * 0.3;
     const shapeNoise = noise3D(Math.cos(angle)*shapeFreq, Math.sin(angle)*shapeFreq, 42.0);
     const distortedDist = dist + shapeNoise * shapeAmp;
     
     // 3. Falloff / Mask
-    // Fade out before the mesh edge to ensure seamless underwater transition
-    const edgeStart = maxDist * 0.75; 
-    const edgeEnd = maxDist * 0.95;
+    const edgeStart = logicalRadius * 0.8; 
+    const edgeEnd = logicalRadius * 1.1; // Fade out around the logical boundary
+    
+    // Ensure we don't exceed the actual geometry radius (which is larger now)
+    // ISLAND_ANGULAR_RADIUS is PI/4, so geometry radius is R * sin(PI/4) ~= 0.707 * R
+    // logicalRadius is R * 0.5. edgeEnd is R * 0.55. Plenty of room.
+    
     const t = THREE.MathUtils.smoothstep(distortedDist, edgeStart, edgeEnd);
     const mask = 1.0 - t;
     
     if (mask <= 0.001) return 0;
 
-    // 4. Terrain Height (Less cone-like, more noisy)
-    const freq = 0.35;
+    // 4. Terrain Height (Smoother, less chaotic)
+    // Lower frequencies
+    const freq = 0.2;
     const n1 = noise3D(x * freq, z * freq, 10.0);
-    const n2 = noise3D(x * freq * 2.0, z * freq * 2.0, 20.0) * 0.5;
-    const n3 = noise3D(x * freq * 4.0, z * freq * 4.0, 30.0) * 0.25;
+    const n2 = noise3D(x * freq * 2.0, z * freq * 2.0, 20.0) * 0.4;
+    // Removed high freq n3 for smoother look
     
-    let h = (n1 + n2 + n3); // -1.75 to 1.75 approx
-    h = (h * 0.5 + 0.5); // 0 to 1 approx
+    let h = (n1 + n2); 
+    h = (h * 0.6 + 0.5); // Normalize roughly
     
-    // Flatten beaches using a power curve
-    h = Math.pow(Math.max(0, h), 1.2);
+    // Flatten beaches
+    h = Math.pow(Math.max(0, h), 1.5); // Stronger flattening
     
-    // Scale amplitude
-    h *= 1.5; 
+    // Scale amplitude (Reduced significantly)
+    h *= 0.8; 
 
-    // 5. Gentle Central Mass (to ensure it's an island, not a ring)
-    // Much wider, softer dome than before
-    const centerDistNorm = Math.min(1.0, distortedDist / (maxDist * 0.8));
+    // 5. Gentle Central Mass
+    // Smoother dome
+    const centerDistNorm = Math.min(1.0, distortedDist / (logicalRadius * 1.0));
+    // Cosine ease out
     const centerMass = Math.cos(centerDistNorm * Math.PI * 0.5); 
-    h += centerMass * 1.8; 
+    h += centerMass * 1.0; // Reduced from 1.8
     
     return h * mask;
 }

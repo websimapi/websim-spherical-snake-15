@@ -13,6 +13,13 @@ export class IslandGenerator {
         // Reusable vectors for physics to avoid garbage
         this._localDir = new THREE.Vector3();
         this._dummyQ = new THREE.Quaternion();
+
+        this.sandUniforms = {
+            uSnakePoints: { value: new Array(20).fill().map(() => new THREE.Vector3()) },
+            uSnakeCount: { value: 0 },
+            uTime: { value: 0 },
+            uGlobalScale: { value: 1.0 }
+        };
     }
 
     trigger(earthRadius) {
@@ -50,6 +57,77 @@ export class IslandGenerator {
         // Generate the detailed terrain mesh
         this.mesh = createIslandMesh(radius);
         
+        // Inject Sand Physics Shader
+        this.mesh.material.onBeforeCompile = (shader) => {
+            shader.uniforms.uSnakePoints = this.sandUniforms.uSnakePoints;
+            shader.uniforms.uSnakeCount = this.sandUniforms.uSnakeCount;
+            shader.uniforms.uGlobalScale = this.sandUniforms.uGlobalScale;
+
+            shader.vertexShader = `
+                uniform vec3 uSnakePoints[20];
+                uniform int uSnakeCount;
+                uniform float uGlobalScale;
+                varying vec3 vWorldPos;
+                varying float vIsBeach;
+            ` + shader.vertexShader;
+
+            // Pass world pos and determine if beach based on color (simple approximation)
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `
+                #include <begin_vertex>
+                
+                // Calculate world position early for logic
+                vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
+                vWorldPos = worldPosition.xyz;
+
+                // Check vertex color (passed as attribute usually)
+                // We use color to identify sand. Beach color is approx (0.93, 0.73, 0.53)
+                // Let's assume red component > 0.8 is sand (grass is 0.26)
+                // color is attribute vec3 color;
+                vIsBeach = 0.0;
+                #ifdef USE_COLOR
+                    if (color.r > 0.6 && color.g > 0.5) {
+                        vIsBeach = 1.0;
+                    }
+                #endif
+
+                // Sand Displacement Logic
+                if (vIsBeach > 0.5 && uSnakeCount > 0) {
+                    vec3 accumulatedOffset = vec3(0.0);
+                    
+                    for(int i = 0; i < 20; i++) {
+                        if (i >= uSnakeCount) break;
+                        
+                        vec3 sPos = uSnakePoints[i];
+                        float dist = distance(worldPosition.xyz, sPos);
+                        
+                        // Interaction radius (adjusted by scale)
+                        float radius = 1.5 * uGlobalScale;
+                        
+                        if (dist < radius) {
+                            float strength = 1.0 - (dist / radius);
+                            strength = pow(strength, 2.0); // smooth falloff
+                            
+                            // Push away from snake point horizontally
+                            vec3 dir = normalize(worldPosition.xyz - sPos);
+                            
+                            // Flatten dir to be tangent-ish (simple repulsion)
+                            accumulatedOffset += dir * strength * 0.4 * uGlobalScale;
+                            
+                            // Also push down slightly to make a groove?
+                            // Or up to make a ridge?
+                            // Let's make a ridge (push up/out)
+                            accumulatedOffset += normal * strength * 0.2 * uGlobalScale;
+                        }
+                    }
+                    
+                    transformed += accumulatedOffset;
+                }
+                `
+            );
+        };
+
         // Align mesh to the target center
         // The mesh is generated at North Pole (0, 1, 0)
         // We rotate it to align (0, 1, 0) with this.center
@@ -107,11 +185,31 @@ export class IslandGenerator {
         return { height: hPhysical, normal: worldNormal };
     }
 
-    update(dt, earthRadius) {
+    update(dt, earthRadius, snake) {
         if (this.state === 'inactive') return;
         
         // Always maintain scale ratio with Earth growth
         const globalScale = earthRadius / this.baseRadius;
+        this.sandUniforms.uGlobalScale.value = globalScale;
+
+        // Update Snake Uniforms
+        if (snake && snake.segments) {
+            let count = 0;
+            
+            // Add head
+            if (count < 20) {
+                this.sandUniforms.uSnakePoints.value[count].copy(snake.head.position);
+                count++;
+            }
+            
+            // Add segments (stride to save uniforms)
+            for(let i=0; i<snake.segments.length; i+=2) {
+                if (count >= 20) break;
+                this.sandUniforms.uSnakePoints.value[count].copy(snake.segments[i].position);
+                count++;
+            }
+            this.sandUniforms.uSnakeCount.value = count;
+        }
 
         if (this.state === 'docked') {
              if (this.mesh) {
