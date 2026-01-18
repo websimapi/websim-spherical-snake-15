@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { calculateIslandHeight, createIslandMesh } from './island-geometry.js';
+import { SandParticles } from './sand-particles.js';
 
 export class IslandGenerator {
     constructor(scene) {
@@ -10,6 +11,8 @@ export class IslandGenerator {
         this.progress = 0; // 0 to 1
         this.baseRadius = 10; // Fixed base radius for generation to ensure consistent noise features
         
+        this.particles = new SandParticles(scene);
+
         // Reusable vectors for physics to avoid garbage
         this._localDir = new THREE.Vector3();
         this._dummyQ = new THREE.Quaternion();
