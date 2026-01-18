@@ -15,7 +15,7 @@ export class IslandGenerator {
         this._dummyQ = new THREE.Quaternion();
 
         // Combined Uniforms (Sand Physics + Tides)
-        this.uniforms = {
+        this.sandUniforms = {
             uSnakePoints: { value: new Array(20).fill().map(() => new THREE.Vector3()) },
             uSnakeCount: { value: 0 },
             uTime: { value: 0 },
@@ -30,9 +30,9 @@ export class IslandGenerator {
 
     setRippleUniforms(rippleUniforms) {
         // Link our uniforms to the game's ripple uniforms for synchronization
-        this.uniforms.uRippleCenters = rippleUniforms.uRippleCenters;
-        this.uniforms.uRippleStartTimes = rippleUniforms.uRippleStartTimes;
-        this.uniforms.uRippleIntensities = rippleUniforms.uRippleIntensities;
+        this.sandUniforms.uRippleCenters = rippleUniforms.uRippleCenters;
+        this.sandUniforms.uRippleStartTimes = rippleUniforms.uRippleStartTimes;
+        this.sandUniforms.uRippleIntensities = rippleUniforms.uRippleIntensities;
     }
 
     trigger(earthRadius) {
