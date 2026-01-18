@@ -157,32 +157,8 @@ export const createSegment = (colorHex) => {
     return new THREE.Mesh(segGeo, segMat);
 };
 
+import { createIslandMesh as createGeoMesh } from './island-geometry.js';
+
 export const createIslandMesh = (radius) => {
-    // Re-create the visual mesh for replay
-    // We reuse the logic from IslandGenerator essentially, but simplified since we can't import the class easily here without refactoring
-    // We'll just make a placeholder visual or a generic bumpy mesh
-    // Ideally we'd use the exact same generation code.
-    // For now, let's make a Green/Sand dome
-    
-    // NOTE: In a real production codebase, we'd share the generator logic.
-    // Here we'll make a visual approx.
-    const geo = new THREE.SphereGeometry(radius * 0.3, 32, 32, 0, Math.PI*2, 0, 0.5); 
-    // Flatten it
-    geo.applyMatrix4(new THREE.Matrix4().makeScale(1, 0.2, 1));
-    
-    const mat = new THREE.MeshStandardMaterial({ 
-        color: 0x44aa44, 
-        roughness: 0.8 
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    
-    // Add a beach ring
-    const beachGeo = new THREE.TorusGeometry(radius * 0.3, 0.2, 8, 32);
-    beachGeo.rotateX(Math.PI/2);
-    const beachMat = new THREE.MeshStandardMaterial({ color: 0xeebb88 });
-    const beach = new THREE.Mesh(beachGeo, beachMat);
-    beach.scale.set(1, 1, 0.5);
-    mesh.add(beach);
-    
-    return mesh;
+    return createGeoMesh(radius);
 };
