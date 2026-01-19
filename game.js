@@ -4,8 +4,9 @@ import { FoodManager } from './food-manager.js';
 import { AudioManager } from './audio-manager.js';
 import { ReplayRecorder } from './replay-recorder.js';
 import { hideLoader } from './loader.js';
-import { getRippleHeight } from './math-utils.js';
 import { IslandGenerator } from './island-generator.js';
+import { CameraManager } from './camera-manager.js';
+import { EarthManager } from './earth-manager.js';
 
 export class Game {
     constructor(scene, camera, renderer) {
@@ -24,32 +25,27 @@ export class Game {
         this.growthPoints = 0;
         this.time = 0;
 
-        // Visuals
-        this.rippleUniforms = {
-            uTime: { value: 0 },
-            uRippleCenters: { value: new Array(5).fill().map(() => new THREE.Vector3()) },
-            uRippleStartTimes: { value: new Array(5).fill(-1000) },
-            uRippleIntensities: { value: new Array(5).fill(0) }
-        };
-        this.currentRippleIdx = 0;
-        
         // Player Info
         this.playerInfo = { username: 'Player', avatarUrl: '' };
         
         // Components
         this.audioManager = new AudioManager();
         this.recorder = new ReplayRecorder(30);
+        this.cameraManager = new CameraManager(camera);
         
         // Entities
-        this.earth = null;
-        this.atm = null;
-        this.snake = null; // Replaces head, segments, pathHistory
-        this.foodManager = null; // Replaces food, bonusFoods, spawn logic
+        this.earthManager = new EarthManager(scene, this.BASE_RADIUS);
+        this.snake = null; 
+        this.foodManager = null;
         this.island = null;
 
         this.targetPoint = null;
 
         this.init();
+    }
+
+    get earth() {
+        return this.earthManager ? this.earthManager.earth : null;
     }
 
     setPlayerInfo(info) {
@@ -99,122 +95,24 @@ export class Game {
     }
 
     init() {
-        // removed loadSound calls - now in AudioManager
-
         this.audioManager.load('eat', './snake_eat.mp3');
         this.audioManager.load('die', './game_over.mp3');
 
-        // Create Earth
-        this.createEarth();
+        // EarthManager handles creation and scene addition
+        // removed createEarth() - logic moved to EarthManager
 
-        // removed Snake Head creation - moved to Snake class
         this.snake = new Snake(this.scene, this.EARTH_RADIUS);
         
         this.island = new IslandGenerator(this.scene);
-        this.island.setRippleUniforms(this.rippleUniforms);
+        this.island.setRippleUniforms(this.earthManager.rippleUniforms);
 
-        // removed Food creation/spawning - moved to FoodManager
         this.foodManager = new FoodManager(this.scene, this.EARTH_RADIUS);
         this.foodManager.spawnFood(this.snake.head.position, this.snake.segments);
 
         this.resetGame();
     }
     
-    createEarth() {
-        const geometry = new THREE.SphereGeometry(this.EARTH_RADIUS, 64, 64);
-        const material = new THREE.MeshStandardMaterial({
-            color: 0x88ccff,
-            emissive: 0x002244, 
-            emissiveIntensity: 0.8,
-            transparent: true,
-            opacity: 0.7,
-            roughness: 0.9,
-            metalness: 0.0,
-            side: THREE.DoubleSide
-        });
-
-        // Inject Ripple Shader Logic
-        material.onBeforeCompile = (shader) => {
-            shader.uniforms.uTime = this.rippleUniforms.uTime;
-            shader.uniforms.uRippleCenters = this.rippleUniforms.uRippleCenters;
-            shader.uniforms.uRippleStartTimes = this.rippleUniforms.uRippleStartTimes;
-            shader.uniforms.uRippleIntensities = this.rippleUniforms.uRippleIntensities;
-
-            shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
-            shader.vertexShader = shader.vertexShader.replace(
-                '#include <worldpos_vertex>',
-                `#include <worldpos_vertex>
-                vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-            );
-
-            const rippleFunc = `
-                uniform float uTime;
-                uniform vec3 uRippleCenters[5];
-                uniform float uRippleStartTimes[5];
-                uniform float uRippleIntensities[5];
-                varying vec3 vWorldPos;
-
-                float getRipple(int i, vec3 pos) {
-                    float startTime = uRippleStartTimes[i];
-                    if (startTime < 0.0) return 0.0;
-                    
-                    float age = uTime - startTime;
-                    if (age < 0.0 || age > 2.0) return 0.0; // Lifetime 2s
-                    
-                    vec3 center = uRippleCenters[i];
-                    float intensity = uRippleIntensities[i];
-                    
-                    float dotProd = dot(normalize(pos), normalize(center));
-                    float angle = acos(clamp(dotProd, -1.0, 1.0));
-                    float dist = angle * 10.0; // approx distance on sphere radius 10
-                    
-                    float speed = 8.0; 
-                    float waveCenter = age * speed;
-                    float distDiff = dist - waveCenter;
-                    
-                    float ripple = 0.0;
-                    // Wave packet width
-                    if (abs(distDiff) < 2.0) {
-                        ripple = sin(distDiff * 3.0) * exp(-distDiff * distDiff);
-                    }
-                    
-                    // Fade out
-                    ripple *= (1.0 - age / 2.0);
-                    ripple *= intensity;
-                    return ripple;
-                }
-            `;
-
-            shader.fragmentShader = rippleFunc + shader.fragmentShader;
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <dithering_fragment>',
-                `#include <dithering_fragment>
-                float totalRipple = 0.0;
-                for(int i=0; i<5; i++) {
-                    totalRipple += getRipple(i, vWorldPos);
-                }
-                if (abs(totalRipple) > 0.01) {
-                    float strength = smoothstep(0.0, 0.5, abs(totalRipple));
-                    vec3 rippleColor = vec3(0.7, 0.9, 1.0);
-                    gl_FragColor.rgb = mix(gl_FragColor.rgb, rippleColor, strength * 0.4);
-                    gl_FragColor.rgb += rippleColor * strength * 0.2;
-                }`
-            );
-        };
-
-        this.earth = new THREE.Mesh(geometry, material);
-        this.scene.add(this.earth);
-        
-        const atmGeometry = new THREE.SphereGeometry(this.EARTH_RADIUS * 1.03, 64, 64);
-        const atmMaterial = new THREE.MeshBasicMaterial({
-            color: 0x4488ff,
-            transparent: true,
-            opacity: 0.1,
-            side: THREE.BackSide
-        });
-        this.atm = new THREE.Mesh(atmGeometry, atmMaterial);
-        this.scene.add(this.atm);
-    }
+    // removed createEarth() {} - logic moved to EarthManager
     
     resetGame() {
         // removed reset logic for segments/bonus foods - delegated to managers
@@ -225,7 +123,7 @@ export class Game {
         this.recorder.reset();
 
         // Reset Visuals
-        this.rippleUniforms.uRippleStartTimes.value.fill(-1000);
+        this.earthManager.reset();
         
         // Reset Island
         if (this.island.mesh) {
@@ -236,13 +134,11 @@ export class Game {
         
         // Reset Radius
         this.EARTH_RADIUS = this.BASE_RADIUS;
-        this.earth.scale.set(1, 1, 1);
-        this.atm.scale.set(1, 1, 1);
         this.snake.EARTH_RADIUS = this.BASE_RADIUS;
         this.foodManager.EARTH_RADIUS = this.BASE_RADIUS;
 
         // Reset Camera
-        this.updateCamera(0.1, true); // Force snap
+        this.cameraManager.update(0.1, this.snake.head.position, this.snake.head.quaternion, this.EARTH_RADIUS, true);
         
         this.score = 0;
         this.growthPoints = 0;
@@ -272,22 +168,7 @@ export class Game {
     }
 
     triggerRipple(point, durationMs) {
-        const idx = this.currentRippleIdx;
-        this.rippleUniforms.uRippleCenters.value[idx].copy(point);
-        this.rippleUniforms.uRippleStartTimes.value[idx] = this.time;
-        
-        // Intensity logic based on hold duration
-        // Short tap (<200ms) -> 0.15
-        // Long tap (>600ms) -> 0.45
-        let intensity = 0.15;
-        if (durationMs > 200) {
-            const factor = Math.min((durationMs - 200) / 400, 1.0);
-            intensity = 0.15 + factor * 0.3;
-        }
-        
-        this.rippleUniforms.uRippleIntensities.value[idx] = intensity;
-        
-        this.currentRippleIdx = (this.currentRippleIdx + 1) % 5;
+        this.earthManager.triggerRipple(point, this.time, durationMs);
 
         // Record for replay
         this.recorder.recordEvent('ripple', { 
@@ -298,7 +179,6 @@ export class Game {
 
     update(dt) {
         this.time += dt;
-        this.rippleUniforms.uTime.value = this.time;
 
         if(this.isGameOver) return;
         
@@ -309,10 +189,8 @@ export class Game {
         const growthSpeed = 0.5;
         this.EARTH_RADIUS = THREE.MathUtils.lerp(this.EARTH_RADIUS, targetRadius, dt * growthSpeed);
         
-        // Update visuals scale
-        const s = this.EARTH_RADIUS / this.BASE_RADIUS;
-        this.earth.scale.set(s, s, s);
-        this.atm.scale.set(s, s, s);
+        // Update Earth Manager (Visuals & Uniforms)
+        this.earthManager.update(dt, this.time, this.EARTH_RADIUS);
         
         // Update Dependencies
         this.snake.EARTH_RADIUS = this.EARTH_RADIUS;
@@ -329,29 +207,16 @@ export class Game {
         const getSurfaceInfo = (pos) => {
             const posNorm = pos.clone().normalize();
             
-            // 1. Base Sphere Normal is just the position direction
-            const sphereNormal = posNorm.clone();
+            // 1. Ripple Height
+            const rH = this.earthManager.getRippleHeightAt(pos, this.time);
             
-            // 2. Ripple Height
-            const rH = getRippleHeight(
-                pos,
-                this.time,
-                this.rippleUniforms.uRippleCenters.value,
-                this.rippleUniforms.uRippleStartTimes.value,
-                this.rippleUniforms.uRippleIntensities.value,
-                this.EARTH_RADIUS
-            );
-            
-            // 3. Island Height & Normal
+            // 2. Island Height & Normal
             const iData = this.island.getHeightAndNormal(posNorm, this.EARTH_RADIUS);
             
             // Combine
-            // We assume ripple doesn't change normal significantly for physics, just visual offset
-            // But Island changes normal significantly
-            
             return {
                 height: iData.height + rH,
-                normal: iData.normal // This already includes slope
+                normal: iData.normal 
             };
         };
 
@@ -416,25 +281,14 @@ export class Game {
         }
 
         // 5. Update Camera
-        this.updateCamera(dt);
+        this.cameraManager.update(dt, this.snake.head.position, this.snake.head.quaternion, this.EARTH_RADIUS);
 
         // 6. Record Frame
         // removed recordFrame implementation - delegated to ReplayRecorder
         this.recorder.update(dt, () => this.getSnapshot());
     }
     
-    updateCamera(dt, snap = false) {
-        const idealCameraPos = this.snake.head.position.clone().normalize().multiplyScalar(30);
-        if (snap) {
-            this.camera.position.copy(idealCameraPos);
-        } else {
-            this.camera.position.lerp(idealCameraPos, 2.0 * dt);
-        }
-        this.camera.lookAt(0, 0, 0);
-        
-        const snakeForward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.snake.head.quaternion);
-        this.camera.up.copy(snakeForward);
-    }
+    // removed updateCamera() - logic moved to CameraManager
 
     getSnapshot() {
         return {

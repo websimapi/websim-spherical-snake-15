@@ -75,10 +75,9 @@ export function calculateIslandHeight(x, y, z, R) {
     detail += plateauNoise * 0.004 * plateauMask;
 
     // Subtle dunes for beach (high frequency, very low amplitude)
-    // Reduced frequency and amplitude for smoother physics interaction (less jitter)
-    const duneNoise = noise3D(wx * 1.0, y * 1.0, wz * 1.0); // Frequency 2.0 -> 1.0
+    const duneNoise = noise3D(wx * 2.0, y * 2.0, wz * 2.0);
     const beachMask = 1.0 - plateauMask; // Inverse of plateau
-    detail += duneNoise * 0.001 * beachMask; // Amplitude 0.0015 -> 0.001
+    detail += duneNoise * 0.0015 * beachMask;
     
     // 6. Combine and Scale
     let h = (baseH + detail) * R;

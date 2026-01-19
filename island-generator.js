@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { calculateIslandHeight, createIslandMesh } from './island-geometry.js';
-import { SandParticles } from './sand-particles.js';
 
 export class IslandGenerator {
     constructor(scene) {
@@ -11,8 +10,6 @@ export class IslandGenerator {
         this.progress = 0; // 0 to 1
         this.baseRadius = 10; // Fixed base radius for generation to ensure consistent noise features
         
-        this.particles = new SandParticles(scene);
-
         // Reusable vectors for physics to avoid garbage
         this._localDir = new THREE.Vector3();
         this._dummyQ = new THREE.Quaternion();
@@ -114,30 +111,12 @@ export class IslandGenerator {
                         if (i >= uSnakeCount) break;
                         vec3 sPos = uSnakePoints[i];
                         float dist = distance(worldPosition.xyz, sPos);
-                        float radius = 1.2 * uGlobalScale;
-                        
+                        float radius = 1.5 * uGlobalScale;
                         if (dist < radius) {
-                            // Normalized distance 0..1
-                            float t = dist / radius;
-                            
-                            // Create a trench shape:
-                            // Deep in middle, rising to a rim, then falling to 0
-                            
-                            // 1. Trench (Dig down)
-                            float trench = -1.0 * smoothstep(1.0, 0.0, t); 
-                            
-                            // 2. Rims (Push up at edges)
-                            float rim = sin(t * 3.14159) * 0.5;
-                            
-                            // Combine vertical displacement
-                            float verticalDisp = (trench * 0.3 + rim * 0.15) * uGlobalScale;
-                            
-                            // 3. Horizontal displacement (Push sand aside)
-                            float pushOut = smoothstep(1.0, 0.0, t) * 0.4 * uGlobalScale;
-                            vec3 pushDir = normalize(worldPosition.xyz - sPos);
-                            
-                            accumulatedOffset += normal * verticalDisp;
-                            accumulatedOffset += pushDir * pushOut;
+                            float strength = pow(1.0 - (dist / radius), 2.0);
+                            vec3 dir = normalize(worldPosition.xyz - sPos);
+                            accumulatedOffset += dir * strength * 0.5 * uGlobalScale;
+                            accumulatedOffset += normal * strength * 0.35 * uGlobalScale;
                         }
                     }
                     transformed += accumulatedOffset;
