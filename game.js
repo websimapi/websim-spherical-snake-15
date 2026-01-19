@@ -141,6 +141,7 @@ export class Game {
         this.cameraManager.update(0.1, this.snake.head.position, this.snake.head.quaternion, this.EARTH_RADIUS, true);
         
         this.score = 0;
+        this.time = 0;
         this.growthPoints = 0;
         this.isGameOver = false;
         this.isPlaying = true;
@@ -182,12 +183,19 @@ export class Game {
 
         if(this.isGameOver) return;
         
-        // Update Sphere Radius based on Score
-        // Growth function: R = Base + 2 * log(1 + Score/10)
-        const targetRadius = this.BASE_RADIUS + 2.0 * Math.log(1 + this.score / 10);
+        // Update Sphere Radius based on Score and Time
+        // Growth function: R = Base + 2 * log(1 + Score/10) + TimeFactor
+        const targetRadius = this.BASE_RADIUS + 2.0 * Math.log(1 + this.score / 10) + (this.time * 0.01);
+        
         // Smoothly interpolate current radius
         const growthSpeed = 0.5;
         this.EARTH_RADIUS = THREE.MathUtils.lerp(this.EARTH_RADIUS, targetRadius, dt * growthSpeed);
+
+        // Update UI Diameter Badge
+        const badgeEl = document.getElementById('planet-diameter-badge');
+        if (badgeEl) {
+            badgeEl.textContent = Math.round(this.EARTH_RADIUS * 2);
+        }
         
         // Update Earth Manager (Visuals & Uniforms)
         this.earthManager.update(dt, this.time, this.EARTH_RADIUS);
